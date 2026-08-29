@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#faf8f3">
+<title>Osho spike</title>
+<style>
+  :root{--paper:#faf8f3;--ink:#1c1a16;--muted:#6b6560;--rule:#e2ddd2;--ok:#2d6a4f;--bad:#9b2226}
+  @media (prefers-color-scheme:dark){
+    :root{--paper:#17150f;--ink:#e8e3d6;--muted:#8a837a;--rule:#2a2721;--ok:#74c69d;--bad:#e5989b}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:2rem 1.25rem 4rem;background:var(--paper);color:var(--ink);
+       font:16px/1.6 ui-serif,'New York',Georgia,serif;
+       -webkit-text-size-adjust:100%}
+  h1{font-size:1.35rem;font-weight:500;margin:0 0 .25rem}
+  .sub{color:var(--muted);font-size:.85rem;margin-bottom:2rem}
+  h2{font-size:.8rem;font-weight:400;text-transform:lowercase;letter-spacing:.04em;
+     color:var(--muted);margin:2rem 0 .6rem;padding-bottom:.4rem;border-bottom:1px solid var(--rule)}
+  button{font:inherit;font-size:.9rem;background:none;color:var(--ink);
+         border:1px solid var(--rule);border-radius:2px;padding:.55rem 1rem;margin:.2rem .3rem .2rem 0}
+  button:active{background:var(--rule)}
+  .row{display:flex;justify-content:space-between;gap:1rem;padding:.4rem 0;font-size:.9rem}
+  .row span:last-child{color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+  .ok{color:var(--ok)!important}.bad{color:var(--bad)!important}
+  pre{font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--muted);white-space:pre-wrap;
+      max-height:14rem;overflow:auto;margin:.5rem 0 0}
+  .dev{font-size:2.5rem;text-align:center;margin:1rem 0 .25rem}
+  .big{font-size:1.1rem}
+</style>
+</head>
+<body>
+
+<h1>Osho · ओशो</h1>
+<div class="sub">PWA feasibility spike — not the app</div>
+
+<h2>1 · playback</h2>
+<div class="dev" id="num">०७</div>
+<div style="text-align:center">
+  <button id="play" class="big">▶ play</button>
+  <button id="back">↺30</button>
+  <button id="fwd">30↻</button>
+</div>
+<div class="row"><span>position</span><span id="pos">—</span></div>
+<div class="row"><span>saved position</span><span id="saved">—</span></div>
+<div class="row"><span>timeupdate events</span><span id="ticks">0</span></div>
+<div class="row"><span>last event while hidden</span><span id="hidden">—</span></div>
+
+<h2>2 · offline cache</h2>
+<button id="cache">download &amp; cache this discourse</button>
+<button id="playCached">play from cache</button>
+<div class="row"><span>cache</span><span id="cachestate">—</span></div>
+<div class="row"><span>quota</span><span id="quota">—</span></div>
+<div class="row"><span>persisted</span><span id="persist">—</span></div>
+
+<h2>3 · log</h2>
+<button id="clear">clear</button>
+<pre id="log"></pre>
+
+<script>
+// ───────────────────────────────────────────── config
+const FOLDER = "OSHO_WORLD/Hindi/100-Maha Geeta 01-91 \u2013 Osho World"; // U+2013 en dash
+const FILE   = "OSHO-Maha_Geeta_07.mp3";
+const URL_   = "https://archive.org/download/osho-audio-discourses-collection/"
+             + encodeURI(FOLDER + "/" + FILE);
+const KEY    = "osho.spike.pos";
+const CACHE  = "osho-spike-v1";
+
+const $ = id => document.getElementById(id);
+const log = m => { $("log").textContent =
+  new Date().toLocaleTimeString() + "  " + m + "\n" + $("log").textContent; };
+
+// ───────────────────────────────────────────── audio
+const audio = new Audio();
+audio.preload = "metadata";
+audio.src = URL_;
+
+let ticks = 0, lastSave = 0;
+
+// TEST: does timeupdate keep firing with the screen locked?
+// This is the mechanism that must replace JS timers for position saving.
+audio.addEventListener("timeupdate", () => {
+  ticks++;
+  $("ticks").textContent = ticks;
+  $("pos").textContent = fmt(audio.currentTime);
+  if (document.hidden) $("hidden").textContent =
+    fmt(audio.currentTime) + " @ " + new Date().toLocaleTimeString();
+  if (audio.currentTime - lastSave > 5) { save(); lastSave = audio.currentTime; }
+  if (navigator.mediaSession && "setPositionState" in navigator.mediaSession) {
+    try { navigator.mediaSession.setPositionState({
+      duration: audio.duration || 0, position: audio.currentTime,
+      playbackRate: audio.playbackRate }); } catch (e) {}
+  }
+});
+
+audio.addEventListener("playing", () => { $("play").textContent = "❚❚ pause"; log("playing"); });
+audio.addEventListener("pause",   () => { $("play").textContent = "▶ play"; save(); log("paused"); });
+audio.addEventListener("error",   () => log("AUDIO ERROR " + (audio.error?.code ?? "?")));
+audio.addEventListener("loadedmetadata", () => log("duration " + fmt(audio.duration)));
+
+function save(){
+  localStorage.setItem(KEY, JSON.stringify({ t: audio.currentTime, at: Date.now() }));
+  $("saved").textContent = fmt(audio.currentTime);
+}
+function fmt(s){
+  if (!isFinite(s)) return "—";
+  const m = Math.floor(s/60), sec = Math.floor(s%60);
+  return m + ":" + String(sec).padStart(2,"0");
+}
+
+// restore
+const prev = JSON.parse(localStorage.getItem(KEY) || "null");
+if (prev) { $("saved").textContent = fmt(prev.t); log("restored " + fmt(prev.t)); }
+
+$("play").onclick = () => {
+  if (audio.paused) {
+    if (prev && audio.currentTime < 1) audio.currentTime = prev.t;
+    audio.play().catch(e => log("play rejected: " + e.message));
+  } else audio.pause();
+};
+$("back").onclick = () => audio.currentTime = Math.max(0, audio.currentTime - 30);
+$("fwd").onclick  = () => audio.currentTime = audio.currentTime + 30;
+
+// save on every exit path — pagehide is the reliable one on iOS
+addEventListener("pagehide", save);
+addEventListener("visibilitychange", () => { save(); log("hidden=" + document.hidden); });
+
+// ───────────────────────────────────────────── media session + canvas artwork
+if ("mediaSession" in navigator) {
+  const c = document.createElement("canvas"); c.width = c.height = 512;
+  const g = c.getContext("2d");
+  g.fillStyle = "#faf8f3"; g.fillRect(0,0,512,512);
+  g.fillStyle = "#1c1a16"; g.textAlign = "center";
+  g.font = "220px serif";  g.fillText("०७", 256, 300);
+  g.font = "44px serif";   g.fillText("महागीता", 256, 400);
+
+  c.toBlob(blob => {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: "०७ · Ashtavakra Maha Geeta",
+      artist: "Osho",
+      album: "अष्टावक्र महागीता",
+      artwork: [{ src: URL.createObjectURL(blob), sizes: "512x512", type: "image/png" }]
+    });
+    log("mediaSession metadata set");
+  });
+
+  navigator.mediaSession.setActionHandler("play",  () => audio.play());
+  navigator.mediaSession.setActionHandler("pause", () => audio.pause());
+  navigator.mediaSession.setActionHandler("seekbackward", () => audio.currentTime -= 30);
+  navigator.mediaSession.setActionHandler("seekforward",  () => audio.currentTime += 30);
+  navigator.mediaSession.setActionHandler("seekto", d => { if (d.seekTime != null) audio.currentTime = d.seekTime; });
+} else log("NO mediaSession — no lock screen controls");
+
+// ───────────────────────────────────────────── storage
+async function quota(){
+  if (!navigator.storage?.estimate) { $("quota").textContent = "unsupported"; return; }
+  const { usage, quota } = await navigator.storage.estimate();
+  $("quota").textContent = (usage/1e6).toFixed(1) + " / " + (quota/1e6).toFixed(0) + " MB";
+}
+async function persist(){
+  if (!navigator.storage?.persist) { $("persist").textContent = "unsupported"; return; }
+  const already = await navigator.storage.persisted();
+  const ok = already || await navigator.storage.persist();
+  $("persist").textContent = ok ? "yes" : "NO — eviction risk";
+  $("persist").className = ok ? "ok" : "bad";
+}
+
+// TEST: can we fetch cross-origin from archive.org? This is the CORS question.
+$("cache").onclick = async () => {
+  $("cachestate").textContent = "fetching…";
+  const t0 = performance.now();
+  try {
+    const res = await fetch(URL_);          // deliberately NOT no-cors
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const blob = await res.blob();
+    const c = await caches.open(CACHE);
+    await c.put(URL_, new Response(blob, { headers:{ "content-type":"audio/mpeg" }}));
+    const secs = (performance.now() - t0)/1000;
+    $("cachestate").textContent = (blob.size/1e6).toFixed(1) + " MB in " + secs.toFixed(0) + "s";
+    $("cachestate").className = "ok";
+    log("CACHED ok — CORS works, " + (blob.size/1e6/secs).toFixed(1) + " MB/s");
+    quota();
+  } catch (e) {
+    $("cachestate").textContent = "FAILED";
+    $("cachestate").className = "bad";
+    log("CACHE FAILED: " + e.message + "  ← likely CORS. Offline is at risk.");
+  }
+};
+
+$("playCached").onclick = async () => {
+  const hit = await caches.match(URL_);
+  if (!hit) { log("nothing cached yet"); return; }
+  audio.src = URL.createObjectURL(await hit.blob());
+  audio.play();
+  log("playing from cache — try aeroplane mode now");
+};
+
+$("clear").onclick = () => $("log").textContent = "";
+quota(); persist();
+</script>
+</body>
+</html>
